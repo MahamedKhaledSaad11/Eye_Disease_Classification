@@ -1,0 +1,50 @@
+# ==========================================
+# Large Datasets & Archives (Do NOT upload to Git)
+# ==========================================
+EyeDiseaseDataset/
+*.zip
+*.tar
+*.gz
+*.rar
+
+# ==========================================
+# PDF Documents (Assignment / Problem Statements)
+# ==========================================
+*.pdf
+Eye Disease Classification.pdf
+
+# ==========================================
+# Large Model Weights & Checkpoints (>100MB)
+# ==========================================
+*.keras
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.ckpt
+
+# ==========================================
+# Python & Jupyter Caches
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ==========================================
+# Environment & IDE Configurations
+# ==========================================
+.env
+venv/
+env/
+.venv/
+.vscode/
+.idea/
+.DS_Store
+
+# ==========================================
+# Local Scratch / Temporary Transcripts
+# ==========================================
+test_plot.png
+extracted_agent_chat.txt

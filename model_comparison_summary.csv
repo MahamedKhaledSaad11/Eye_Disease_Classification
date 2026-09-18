@@ -1,0 +1,10 @@
+Evaluation Metric,Custom Scratch CNN,Fine-Tuned ResNet50,Improvement (Δ)
+Architecture Backbone,5-Block Deep CNN (From Scratch),ResNet50 (ImageNet Pretrained),Transfer Learning Advantage
+Total Parameters (M),1.64 M,24.12 M,+22.48 M
+Model Disk Size (MB),31.37 MB,333.39 MB,+302.01 MB
+Overall Accuracy,46.79%,73.23%,+26.44%
+Balanced Accuracy,20.65%,72.17%,+51.52%
+Macro-Averaged F1-Score,0.2055,0.6761,+0.4707
+Weighted F1-Score,0.4166,0.7326,+0.3161
+Inference Latency (Single Image),5.00 ms,11.92 ms,+6.92 ms
+Throughput (Frames Per Second),200.2 FPS,83.9 FPS,-116.2 FPS
