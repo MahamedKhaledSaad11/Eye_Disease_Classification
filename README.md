@@ -56,8 +56,14 @@ The dataset exhibits severe class imbalance with a maximum-to-minimum ratio of *
 
 ### 2. Class-Balanced Loss Weighting (Cui et al., CVPR 2019)
 Rather than naive inverse frequency weighting (which causes explosive gradients on tiny classes), we implement the **Effective Number of Samples** weighting formulation:
-$$E_{n} = \frac{1 - \beta^n}{1 - \beta}, \quad W_c = \frac{1 - \beta}{1 - \beta^{N_c}}$$
-With hyperparameter $\beta = 0.999$, normalized such that $\sum_{c=1}^8 W_c = 8$. This smoothly penalizes false negatives on minority categories without gradient instability.
+
+```
+Effective Number of Samples Formulation:
+E_n = (1 - beta^n) / (1 - beta)
+W_c = (1 - beta)   / (1 - beta^(N_c))
+```
+
+With hyperparameter `beta = 0.999`, normalized such that `sum(W_c) = 8.0`. This smoothly penalizes false negatives on minority categories without gradient instability.
 
 ### 3. Data Splits Integrity (Zero Leakage Protocol)
 * **Validation Benchmark:** `splits/val.csv` (1,197 images) was held strictly fixed as the official validation benchmark.
@@ -73,11 +79,11 @@ With hyperparameter $\beta = 0.999$, normalized such that $\sum_{c=1}^8 W_c = 8$
 Fundus imaging devices from different hospital centers present varied camera aperture masks, illumination borders, and resolutions:
 1. **Tight Circular Border Crop:** Dynamically locates fundus circular boundary using adaptive Otsu/intensity thresholding to eliminate black borders.
 2. **Aspect-Ratio Preserving Square Letterboxing:** Pads cropped image to an isotropic square before resizing, preventing artificial distortion of spherical eyeballs and optic disc ratios into ellipses.
-3. **Target Spatial Scale:** $512 \times 512$ pixels (chosen over $224 \times 224$ to preserve microscopic microaneurysms and drusen).
+3. **Target Spatial Scale:** 512 x 512 pixels (chosen over 224 x 224 to preserve microscopic microaneurysms and drusen).
 4. **Retinal-Safe Augmentations:**
    * Random Horizontal Flip (simulates bilateral left eye to right eye transposition).
-   * Slight Random Rotation ($\pm 18^\circ$) with `fill_mode='constant', fill_value=0.0` (eliminating mirror edge reflection artifacts).
-   * Mild contrast jitter ($\pm 10\%$). Strict avoidance of vertical flips or hue shifts.
+   * Slight Random Rotation (+/- 18 degrees) with `fill_mode='constant', fill_value=0.0` (eliminating mirror edge reflection artifacts).
+   * Mild contrast jitter (+/- 10%). Strict avoidance of vertical flips or hue shifts.
 5. **Streaming tf.data Engine:** Non-blocking multi-threaded pipeline with `AUTOTUNE` prefetching and Mixed Precision (`mixed_float16`) execution.
 
 ---
@@ -115,8 +121,8 @@ graph TD
 ```
 
 ### Two-Phase Training Regimen for ResNet50
-* **Phase 1 (Warmup, 3 Epochs):** Backbone frozen (`trainable = False`), classification head trained with AdamW ($\text{lr} = 10^{-3}$).
-* **Phase 2 (Deep Fine-Tuning, 10 Epochs):** Unfreezing top residual block (`conv5_block1..3`, 15.77M parameters) with gentle learning rate ($\text{lr} = 5 \times 10^{-5}$) using `ReduceLROnPlateau` and `EarlyStopping`.
+* **Phase 1 (Warmup, 3 Epochs):** Backbone frozen (`trainable = False`), classification head trained with AdamW (learning rate = 1e-3).
+* **Phase 2 (Deep Fine-Tuning, 10 Epochs):** Unfreezing top residual block (`conv5_block1..3`, 15.77M parameters) with gentle learning rate (learning rate = 5e-5) using `ReduceLROnPlateau` and `EarlyStopping`.
 
 ---
 
@@ -165,52 +171,58 @@ The evaluation mandates analyzing whether the models are suitable for edge devic
 
 ### 3. In-Depth Technical Analysis: Top-2 Differential Diagnosis Framework (88.66% Accuracy)
 
-In practical medical computer vision and clinical ophthalmology, evaluating diagnostic models strictly via **Top-1 Exact Match Accuracy** ($75.73\%$) introduces systemic statistical penalties that fail to reflect medical reality. Real-world ophthalmologists do not function as isolated $\arg\max$ decision boundaries; they operate via a structured **Differential Diagnosis (DDx)** protocol. 
+In practical medical computer vision and clinical ophthalmology, evaluating diagnostic models strictly via **Top-1 Exact Match Accuracy** (75.73%) introduces systemic statistical penalties that fail to reflect medical reality. Real-world ophthalmologists do not function as isolated hard argmax decision boundaries; they operate via a structured **Differential Diagnosis (DDx)** protocol. 
 
-This section presents the formal mathematical foundations, information-theoretic properties, clinical multi-morbidity dynamics, empirical error dissection, and triage deployment architectures governing the **Top-2 Differential Diagnosis accuracy ($88.66\%$)**.
+This section presents the formal mathematical foundations, information-theoretic properties, clinical multi-morbidity dynamics, empirical error dissection, and triage deployment architectures governing the **Top-2 Differential Diagnosis accuracy (88.66%)**.
 
 ---
 
 #### 3.1 Mathematical Formulation and Probability Mass Concentration
 
-Let $\mathcal{D} = \{(\mathbf{x}_i, y_i)\}_{i=1}^N$ represent the held-out evaluation dataset consisting of $N = 1,199$ fundus images, where $y_i \in \mathcal{C} = \{1, 2, \dots, C\}$ denotes the ground-truth categorical disease label across $C = 8$ classes. 
+Let the evaluation dataset consist of `N = 1,199` held-out fundus images, where each image has a ground-truth categorical disease label across `C = 8` classes: `y_i in {1, 2, ..., C}`.
 
-Given an input image $\mathbf{x}_i$, the deep convolutional backbone parameterized by $\boldsymbol{\theta}$ produces a continuous logit vector $\mathbf{z}_i = f_{\boldsymbol{\theta}}(\mathbf{x}_i) \in \mathbb{R}^C$. Applying the softmax activation operator yields a normalized posterior probability distribution over the simplex $\Delta^{C-1}$:
+Given an input image `x_i`, the deep convolutional backbone produces a continuous logit vector `z_i = f(x_i)` in `R^C`. Applying the calibrated softmax activation operator yields a normalized posterior probability distribution:
 
-$$\hat{p}_{i,c} = P(Y = c \mid \mathbf{x}_i; \boldsymbol{\theta}) = \frac{\exp(z_{i,c} / T)}{\sum_{j=1}^C \exp(z_{i,j} / T)}, \quad \sum_{c=1}^C \hat{p}_{i,c} = 1$$
-
-where $T$ denotes temperature scaling parameter ($T = 1.0$ post-calibration).
+```
+Softmax Posterior Probability Distribution:
+p(Y = c | x_i) = exp(z_{i,c} / T) / sum_{j=1}^C exp(z_{i,j} / T),   where sum_{c=1}^C p(Y = c | x_i) = 1.0
+(with temperature scaling parameter T = 1.0 post-calibration)
+```
 
 ##### A. Definition of Top-k Hypothesis Sets
-Let $\pi_i = (\pi_{i,1}, \pi_{i,2}, \dots, \pi_{i,C})$ define the permutation of class indices sorted in descending order of posterior probability:
+Let `pi_i = (pi_{i,1}, pi_{i,2}, ..., pi_{i,C})` define the permutation of class indices sorted in descending order of posterior probability: `p(pi_{i,1}) >= p(pi_{i,2}) >= ... >= p(pi_{i,C})`.
 
-$$\hat{p}_{i,\pi_{i,1}} \ge \hat{p}_{i,\pi_{i,2}} \ge \dots \ge \hat{p}_{i,\pi_{i,C}}$$
+```
+Top-1 Exact Match Formulation:
+y_hat_i^(1) = pi_{i,1} = argmax_{c} p(Y = c | x_i)
+Accuracy_Top-1 = (1 / N) * sum_{i=1}^N [ y_hat_i^(1) == y_i ] = 75.73%  (908 of 1,199 samples)
 
-* **Top-1 Exact Match Indicator:**
-  $$\hat{y}_i^{(1)} = \pi_{i,1} = \arg\max_{c \in \mathcal{C}} \hat{p}_{i,c}$$
-  $$\text{Acc}_{\text{Top-1}} = \frac{1}{N} \sum_{i=1}^N \mathbb{I}\left(\hat{y}_i^{(1)} = y_i\right) = 75.73\% \quad (908 \text{ of } 1,199 \text{ samples})$$
+Top-2 Differential Candidate Set:
+S_i^(2) = { pi_{i,1}, pi_{i,2} } = argtop_2 { p(Y = 1 | x_i), ..., p(Y = C | x_i) }
+Accuracy_Top-2 = (1 / N) * sum_{i=1}^N [ y_i in S_i^(2) ]     = 88.66%  (1,063 of 1,199 samples)
+```
 
-* **Top-2 Differential Candidate Set:**
-  $$\mathcal{S}_i^{(2)} = \{\pi_{i,1}, \pi_{i,2}\} = \arg\text{top}_2 \left( \hat{p}_{i,1}, \dots, \hat{p}_{i,C} \right)$$
-  $$\text{Acc}_{\text{Top-2}} = \frac{1}{N} \sum_{i=1}^N \mathbb{I}\left(y_i \in \mathcal{S}_i^{(2)}\right) = \mathbf{88.66\%} \quad (1,063 \text{ of } 1,199 \text{ samples})$$
-
-##### B. Cumulative Probability Mass Function ($M_2$)
+##### B. Cumulative Probability Mass Function (M_2)
 To verify that the model is not arbitrarily distributing probability across multiple classes, we measure the two-class cumulative probability density:
 
-$$M_2(\mathbf{x}_i) = \sum_{c \in \mathcal{S}_i^{(2)}} \hat{p}_{i,c} = \hat{p}_{i,\pi_{i,1}} + \hat{p}_{i,\pi_{i,2}}$$
+```
+M_2(x_i) = p(pi_{i,1} | x_i) + p(pi_{i,2} | x_i)
+```
 
 Across the entire 1,199 test images:
-* **Mean Cumulative Density:** $\mathbb{E}[M_2] = \mathbf{0.8427}$ ($84.27\%$).
-* **Median Cumulative Density:** $\text{Med}[M_2] = \mathbf{0.8914}$ ($89.14\%$).
+* **Mean Cumulative Density:** `E[M_2] = 0.8427` (84.27%)
+* **Median Cumulative Density:** `Med[M_2] = 0.8914` (89.14%)
 
-This establishes that the network concentrates $84.3\%$ of its total probability mass on the primary candidate pair, leaving an average of only $15.7\%$ scattered across the remaining 6 disease categories. The model exhibits low epistemic dispersion.
+This establishes that the network concentrates 84.3% of its total probability mass on the primary candidate pair, leaving an average of only 15.7% scattered across the remaining 6 disease categories. The model exhibits low epistemic dispersion.
 
 ##### C. Statistical Lift over Prior Expectation
-Under an uninformative uniform prior over $C = 8$ classes, random selection of $k = 2$ classes yields an expected accuracy of:
+Under an uninformative uniform prior over `C = 8` classes, random selection of `k = 2` classes yields an expected accuracy of:
 
-$$\mathbb{E}[\text{Acc}_{\text{Random}}] = \frac{k}{C} = \frac{2}{8} = 25.00\%$$
+```
+E[Accuracy_Random] = k / C = 2 / 8 = 25.00%
+```
 
-The ensemble model achieves $88.66\%$, corresponding to a **Performance Factor of 3.55x** above random baseline ($\Delta = +63.66\%$).
+The ensemble model achieves **88.66%**, corresponding to a **Performance Factor of 3.55x** above random baseline (`Delta = +63.66%`).
 
 ```
 Quantitative Comparison of Diagnostic Metric Formulations:
@@ -238,7 +250,7 @@ In clinical medicine, diagnostic reasoning does not occur via binary hard assign
 
 #### 3.3 Pathological Co-Morbidity and the Single-Label Annotation Bottleneck
 
-The primary technical factor separating Top-1 ($75.73\%$) from Top-2 ($88.66\%$) accuracy is the **Single-Label Forced Choice Paradox** inherent to ocular screening datasets (ODIR-5K, APTOS, ACRIMA).
+The primary technical factor separating Top-1 (75.73%) from Top-2 (88.66%) accuracy is the **Single-Label Forced Choice Paradox** inherent to ocular screening datasets (ODIR-5K, APTOS, ACRIMA).
 
 In real-world cohorts of patients over 55 years of age, ocular pathologies frequently co-occur within the same eye:
 
@@ -250,16 +262,18 @@ In real-world cohorts of patients over 55 years of age, ocular pathologies frequ
 Medical annotators in the ODIR-5K challenge were restricted to assigning a single mutually exclusive string per image. When a patient presented with both cataract opacity and diabetic microaneurysms, human annotators selected one based on arbitrary subjective prominence. 
 
 If the deep neural network accurately detects both pathological signatures and allocates:
-$$\hat{p}_{\text{Cataract}} = 0.44, \quad \hat{p}_{\text{Diabetic Retinopathy}} = 0.41, \quad \hat{p}_{\text{Others}} = 0.05, \quad \dots$$
+```
+p(Cataract) = 0.44,   p(Diabetic Retinopathy) = 0.41,   p(Others) = 0.05,   ...
+```
 
-* Under **Top-1 evaluation**, if the annotator entered `Diabetic Retinopathy`, the model is penalized as an outright misclassification ($0\%$).
-* Under **Top-2 evaluation**, the model receives a correct score ($100\%$), which accurately reflects that the algorithm correctly detected and prioritized both real pathologies over all remaining alternatives.
+* Under **Top-1 evaluation**, if the annotator entered `Diabetic Retinopathy`, the model is penalized as an outright misclassification (0%).
+* Under **Top-2 evaluation**, the model receives a correct score (100%), which accurately reflects that the algorithm correctly detected and prioritized both real pathologies over all remaining alternatives.
 
 ---
 
 #### 3.4 Empirical Error Dissection of the 12.93% Differential Increment
 
-The performance delta between Top-1 ($75.73\%$) and Top-2 ($88.66\%$) corresponds to exactly **155 test patients ($12.93\%$ of $N=1,199$)** whose true ground-truth condition was identified by the model as Rank #2.
+The performance delta between Top-1 (75.73%) and Top-2 (88.66%) corresponds to exactly **155 test patients (12.93% of N=1,199)** whose true ground-truth condition was identified by the model as Rank #2.
 
 A rigorous post-hoc error audit classifies these 155 rescued cases into five distinct pathological categories:
 
@@ -277,17 +291,17 @@ Total Rescued Cohort                           155            100.0%         Gro
 ```
 
 ##### Quantitative Properties of the Rescued Cohort:
-* **Average Probability Assigned to True Label:** In these 155 patients, the average posterior probability assigned to the ground-truth class was **$28.42\%$** (ranging from $21.1\%$ to $48.9\%$).
-* **Margin of Top-1 Lead:** In $61.3\%$ of these cases, the difference between the Top-1 prediction and the true Top-2 label was less than **$\Delta p = 0.12$**, indicating that the two hypotheses were separated by a narrow probability margin.
+* **Average Probability Assigned to True Label:** In these 155 patients, the average posterior probability assigned to the ground-truth class was **28.42%** (ranging from 21.1% to 48.9%).
+* **Margin of Top-1 Lead:** In 61.3% of these cases, the difference between the Top-1 prediction and the true Top-2 label was less than **Delta p = 0.12**, indicating that the two hypotheses were separated by a narrow probability margin.
 
 ---
 
 #### 3.5 Structural High Entropy of the "Others" Class
 
-The "Others" category accounts for **$14.8\%$ of the dataset ($1,748$ images)**. 
+The "Others" category accounts for **14.8% of the dataset (1,748 images)**. 
 
 Unlike specific ocular conditions that possess discrete morphological biomarkers:
-* **Glaucoma:** Focal cup-to-disc ratio $> 0.65$, neuroretinal rim thinning.
+* **Glaucoma:** Focal cup-to-disc ratio > 0.65, neuroretinal rim thinning.
 * **AMD:** Focal drusen deposits within the 3mm foveal zone.
 * **Diabetic Retinopathy:** Microaneurysms, cotton wool spots, hard exudates.
 
@@ -295,15 +309,18 @@ The "Others" class is an agglomeration of over 30 distinct ocular abnormalities,
 
 Because "Others" does not form a compact, coherent visual manifold in feature space, its latent representations exhibit high internal variance:
 
-$$H(Y \mid \mathbf{x}_{\text{Others}}) = - \sum_{c=1}^C \hat{p}_c \log_2 \hat{p}_c \gg H(Y \mid \mathbf{x}_{\text{Glaucoma}})$$
+```
+Entropy Relationship:
+H(Y | x_Others) = - sum_{c=1}^C p_c * log2(p_c) >> H(Y | x_Glaucoma)
+```
 
-Under Top-1, the high entropy of "Others" creates cross-boundary interference with Mild DR and Normal. Under Top-2, the network consistently clusters the true specific condition alongside "Others", successfully capturing the true diagnosis in $88.66\%$ of samples.
+Under Top-1, the high entropy of "Others" creates cross-boundary interference with Mild DR and Normal. Under Top-2, the network consistently clusters the true specific condition alongside "Others", successfully capturing the true diagnosis in 88.66% of samples.
 
 ---
 
 #### 3.6 Cross-Architectural Benchmark across All Paradigms
 
-All six experimental paradigms were evaluated under identical conditions on the held-out test cohort ($N=1,199$):
+All six experimental paradigms were evaluated under identical conditions on the held-out test cohort (N = 1,199):
 
 | Model Paradigm | Notebook Source | Parameter Count | Top-1 Accuracy | Top-2 Accuracy | Macro F1-Score | Balanced Accuracy |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -317,13 +334,13 @@ All six experimental paradigms were evaluated under identical conditions on the 
 ##### Why the Direct Single-Stage Ensemble Outperforms Hierarchical Cascades:
 
 1. **The Cascading Error Trap in Multi-Stage Cascades:**
-   The Tri-Model Dedicated Cascade splits classification into Stage 1 (Screening: Normal vs Disease, 80.23% acc), Stage 2 (Triage: Specific vs Others, 68.70% acc), and Stage 3 (6-Class Diagnostic, 83.77% acc). However, errors compound multiplicatively across sequential gates ($0.8023 \times 0.6870 \times 0.8377 \approx 46.1\%$). In practice, Stage 1 misrouted 109 Diabetic Retinopathy cases to Normal, and Stage 2 misrouted 87 DR cases and 18 AMD cases to Others. Because downstream stages never see these samples, the errors are irrecoverable, capping end-to-end Top-1 accuracy at 64.80%.
+   The Tri-Model Dedicated Cascade splits classification into Stage 1 (Screening: Normal vs Disease, 80.23% acc), Stage 2 (Triage: Specific vs Others, 68.70% acc), and Stage 3 (6-Class Diagnostic, 83.77% acc). However, errors compound multiplicatively across sequential gates (0.8023 * 0.6870 * 0.8377 approx 46.1%). In practice, Stage 1 misrouted 109 Diabetic Retinopathy cases to Normal, and Stage 2 misrouted 87 DR cases and 18 AMD cases to Others. Because downstream stages never see these samples, the errors are irrecoverable, capping end-to-end Top-1 accuracy at 64.80%.
 
 2. **Negative Gradient Transfer in Multi-Head Architectures:**
    In the Unified Multi-Head ResNet50, sharing a single backbone across three task heads forced convolutional layers to balance conflicting objectives: coarse binary screening (Normal vs Disease) versus delicate structural feature extraction (e.g., cup-to-disc ratio in Glaucoma, copper-wiring in Hypertension). Backpropagated gradients from the dominant binary head overshadowed subtle minority signals, causing catastrophic sensitivity loss on rare classes (Hypertension F1 dropped to 0.00).
 
 3. **Inductive Superiority of Direct Multi-Class Ensembling:**
-   Direct 8-class classification coupled with the Effective Number of Samples loss weighting ($\beta=0.999$) allows the network to learn shared discriminative representations without gating bottlenecks. Ensembling ResNet50 (residual identity shortcuts) and VGG19 (hierarchical convolutional filters) with Test-Time Augmentation (TTA) mitigates individual model biases and yields the project peak performance of **75.73% Top-1** and **88.66% Top-2 Differential Diagnosis** accuracy.
+   Direct 8-class classification coupled with the Effective Number of Samples loss weighting (beta = 0.999) allows the network to learn shared discriminative representations without gating bottlenecks. Ensembling ResNet50 (residual identity shortcuts) and VGG19 (hierarchical convolutional filters) with Test-Time Augmentation (TTA) mitigates individual model biases and yields the project peak performance of **75.73% Top-1** and **88.66% Top-2 Differential Diagnosis** accuracy.
 
 ---
 
@@ -352,22 +369,22 @@ p_(1) >= 0.80          p_(1) < 0.80
 
 ##### Algorithmic Rules:
 * **Tier 1 (Autonomous High-Confidence Triage):**
-  $$\text{Condition: } \hat{p}_{\pi_1} \ge 0.80$$
-  * *Cohort Volume:* $64.2\%$ of all incoming patients.
-  * *Empirical Accuracy:* $94.1\%$ Top-1 match.
-  * *Clinical Action:* Direct patient routing to standard diagnostic pathway.
+  * **Rule:** `p_(1) >= 0.80`
+  * **Cohort Volume:** 64.2% of all incoming patients.
+  * **Empirical Accuracy:** 94.1% Top-1 match.
+  * **Clinical Action:** Direct patient routing to standard diagnostic pathway.
 * **Tier 2 (Differential Review with Grad-CAM):**
-  $$\text{Condition: } \hat{p}_{\pi_1} < 0.80 \quad \text{and} \quad (\hat{p}_{\pi_1} + \hat{p}_{\pi_2}) \ge 0.75$$
-  * *Cohort Volume:* $26.5\%$ of patients.
-  * *Empirical Accuracy:* $89.8\%$ Top-2 match.
-  * *Clinical Action:* Surface both candidate diseases with Grad-CAM anatomical saliency heatmaps for rapid physician verification.
+  * **Rule:** `p_(1) < 0.80` and `(p_(1) + p_(2)) >= 0.75`
+  * **Cohort Volume:** 26.5% of patients.
+  * **Empirical Accuracy:** 89.8% Top-2 match.
+  * **Clinical Action:** Surface both candidate diseases with Grad-CAM anatomical saliency heatmaps for rapid physician verification.
 * **Tier 3 (Inconclusive / Mandatory Specialist Deferral):**
-  $$\text{Condition: } (\hat{p}_{\pi_1} + \hat{p}_{\pi_2}) < 0.75$$
-  * *Cohort Volume:* $9.3\%$ of patients.
-  * *Clinical Action:* Automated flag for high epistemic uncertainty; patient referred for dilated slit-lamp examination or multi-modal OCT imaging.
+  * **Rule:** `(p_(1) + p_(2)) < 0.75`
+  * **Cohort Volume:** 9.3% of patients.
+  * **Clinical Action:** Automated flag for high epistemic uncertainty; patient referred for dilated slit-lamp examination or multi-modal OCT imaging.
 
 ##### Diagnostic Risk Reduction:
-By deferring only $9.3\%$ of high-uncertainty cases to specialist evaluation, this three-tier architecture reduces the effective failure rate of the automated system from **$24.27\%$** (under raw Top-1) down to **$3.21\%$** in primary triage.
+By deferring only 9.3% of high-uncertainty cases to specialist evaluation, this three-tier architecture reduces the effective failure rate of the automated system from **24.27%** (under raw Top-1) down to **3.21%** in primary triage.
 
 ---
 
@@ -376,11 +393,11 @@ By deferring only $9.3\%$ of high-uncertainty cases to specialist evaluation, th
 The diagnostic performance reported in this benchmark aligns directly with published medical literature:
 
 1. **Peking University ODIR-2019 Challenge Benchmarks:**
-   In the official ODIR competition, the primary ranking metric is the mean multi-label Area Under the ROC Curve (AUC) across all 8 classes. Winning solutions (such as Peking University and Tsinghua University submissions) achieved mean AUCs between **$0.890$ and $0.925$**, which corresponds mathematically to our **$88.66\%$ Top-2 accuracy**.
+   In the official ODIR competition, the primary ranking metric is the mean multi-label Area Under the ROC Curve (AUC) across all 8 classes. Winning solutions (such as Peking University and Tsinghua University submissions) achieved mean AUCs between **0.890 and 0.925**, which corresponds mathematically to our **88.66% Top-2 accuracy**.
 2. **Clinical AI Benchmarks (JAMA / Cell):**
    * *Gulshan et al. (JAMA 2016):* Evaluated single-condition Diabetic Retinopathy screening on 2-class binary distributions.
-   * *Ting et al. (JAMA 2017):* Multi-disease fundus evaluation showed individual class sensitivities of $72.0\% - 77.0\%$ for rare conditions, while ensemble differential lists achieved sensitivities exceeding $88.0\%$.
-   * *Kermany et al. (Cell 2018):* Demonstrated that for multi-class retinal OCT, presenting top-2 differentials resolved human-grader inter-observer variability by over $11.4\%$.
+   * *Ting et al. (JAMA 2017):* Multi-disease fundus evaluation showed individual class sensitivities of 72.0% - 77.0% for rare conditions, while ensemble differential lists achieved sensitivities exceeding 88.0%.
+   * *Kermany et al. (Cell 2018):* Demonstrated that for multi-class retinal OCT, presenting top-2 differentials resolved human-grader inter-observer variability by over 11.4%.
 
 ---
 
@@ -420,8 +437,8 @@ Gradient-weighted Class Activation Mapping (Grad-CAM) was applied to the final c
 This notebook implements all foundational specifications required for the eye disease classification benchmark:
 * **Environment and Data Ingestion:** Kaggle/Colab path resolution, automated dataset download via `gdown`, metadata validation.
 * **Exploratory Data Analysis:** Sample distribution across splits, verification of 11,839 total images, visual inspection gallery of all 8 disease categories.
-* **Class Imbalance Mitigation:** Formulation and computation of Cui et al.'s Class-Balanced Loss using the Effective Number of Samples ($\beta=0.999$).
-* **Medical Preprocessing Engine:** Automated circular border cropping, aspect-ratio preserving square letterboxing to $512 \times 512$, retinal-safe data augmentation, and optimized `tf.data` input pipeline with mixed precision.
+* **Class Imbalance Mitigation:** Formulation and computation of Cui et al.'s Class-Balanced Loss using the Effective Number of Samples (beta = 0.999).
+* **Medical Preprocessing Engine:** Automated circular border cropping, aspect-ratio preserving square letterboxing to 512 x 512, retinal-safe data augmentation, and optimized `tf.data` input pipeline with mixed precision.
 * **Custom Scratch CNN Baseline:** Definition, compilation, and training of a 5-block convolutional network with Batch Normalization, Dropout, and Global Average Pooling (1.64M parameters).
 * **Pretrained ResNet50 Transfer Learning:** Two-phase training protocol: Phase 1 warmup of the classification head followed by Phase 2 deep fine-tuning of residual block `conv5`.
 * **Clinical Interpretability (Grad-CAM):** Single-graph gradient localization mapping on `conv5_block3_out` to generate high-resolution anatomical heatmaps verifying feature grounding.
