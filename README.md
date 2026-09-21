@@ -91,32 +91,32 @@ Fundus imaging devices from different hospital centers present varied camera ape
 ## Model Architectures
 
 ```mermaid
-graph TD
-    subgraph Data Pipeline
+flowchart TD
+    subgraph DataPipeline ["Data Preprocessing Pipeline"]
         Raw["Raw Fundus (11,839 images)"] --> Crop["Circular Border Crop"]
         Crop --> Pad["Square Letterbox Pad"]
         Pad --> Resize["Resize to 512x512"]
         Resize --> Aug["Retinal-Safe Augmentation"]
     end
 
-    subgraph Baseline: Custom Scratch CNN (1.64M params)
-        Aug --> Conv1["Conv 32 -> BN -> ReLU -> MaxPool -> Drop(0.2)"]
-        Conv1 --> Conv2["Conv 64 -> BN -> ReLU -> MaxPool -> Drop(0.2)"]
-        Conv2 --> Conv3["Conv 128 -> BN -> ReLU -> MaxPool -> Drop(0.3)"]
-        Conv3 --> Conv4["Conv 256 -> BN -> ReLU -> MaxPool -> Drop(0.3)"]
-        Conv4 --> Conv5["Conv 512 -> BN -> ReLU -> MaxPool -> Drop(0.4)"]
+    subgraph ScratchCNN ["Baseline: Custom Scratch CNN (1.64M params)"]
+        Aug --> Conv1["Conv 32 (BN, ReLU, MaxPool, Drop 0.2)"]
+        Conv1 --> Conv2["Conv 64 (BN, ReLU, MaxPool, Drop 0.2)"]
+        Conv2 --> Conv3["Conv 128 (BN, ReLU, MaxPool, Drop 0.3)"]
+        Conv3 --> Conv4["Conv 256 (BN, ReLU, MaxPool, Drop 0.3)"]
+        Conv4 --> Conv5["Conv 512 (BN, ReLU, MaxPool, Drop 0.4)"]
         Conv5 --> GAP1["Global Average Pooling (512-dim)"]
-        GAP1 --> Dense1["Dense(128) -> Dropout(0.4)"]
-        Dense1 --> Softmax1["Softmax(8, float32)"]
+        GAP1 --> Dense1["Dense(128) with Dropout(0.4)"]
+        Dense1 --> Softmax1["Softmax (8 Classes)"]
     end
 
-    subgraph SOTA: Fine-Tuned ResNet50 (24.12M params)
+    subgraph ResNetModel ["SOTA: Fine-Tuned ResNet50 (24.12M params)"]
         Aug --> Preproc["ImageNet BGR Preprocessor"]
-        Preproc --> Base["ResNet50 Backbone (Weights: ImageNet)"]
+        Preproc --> Base["ResNet50 Backbone (ImageNet)"]
         Base --> GAP2["Global Average Pooling (2048-dim)"]
         GAP2 --> BN2["BatchNormalization"]
-        BN2 --> Dense2["Dense(256) -> Dropout(0.4)"]
-        Dense2 --> Softmax2["Softmax(8, float32)"]
+        BN2 --> Dense2["Dense(256) with Dropout(0.4)"]
+        Dense2 --> Softmax2["Softmax (8 Classes)"]
     end
 ```
 
