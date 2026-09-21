@@ -13,6 +13,7 @@ EyeDiseaseDataset/
 *.pdf
 Eye Disease Classification.pdf
 
+
 # ==========================================
 # Large Model Weights & Checkpoints (>100MB)
 # ==========================================
@@ -48,3 +49,7 @@ env/
 # ==========================================
 test_plot.png
 extracted_agent_chat.txt
+.playwright-mcp/
+accuracy.png
+confusion_matrix.png
+
